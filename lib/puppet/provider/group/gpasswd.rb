@@ -62,10 +62,6 @@ Puppet::Type.type(:group).provide :gpasswd, :parent => Puppet::Type::Group::Prov
 
     retval = @current_members
 
-    if !@resource[:auth_membership] && (members_to_set - @current_members).empty?
-      retval = members_to_set
-    end
-
     retval = retval.sort
 
     # Puppet 5.5.7 breaking change workaround
@@ -77,36 +73,45 @@ Puppet::Type.type(:group).provide :gpasswd, :parent => Puppet::Type::Group::Prov
   end
 
   def members_insync?(is, should)
-    Array(is).uniq.sort == Array(should).uniq.sort
+    is.uniq.sort == final_members(is, Array(should))
   end
 
   def members=(to_set)
     cmd = []
     if Puppet.version == "5.5.7"
-      to_be_added = to_set.split(',')
+      to_set = to_set.split(',')
     else
-      to_be_added = to_set.dup
+      to_set = to_set.dup
     end
 
-    if @resource[:auth_membership]
-      to_be_removed = @current_members - to_be_added
-      to_be_added = to_be_added - @current_members
+    group_members = final_members(@current_members, to_set)
 
-      !to_be_removed.empty? && cmd += to_be_removed.map { |x|
+    to_be_removed = @current_members - group_members
+    unless to_be_removed.empty?
+      cmd += to_be_removed.map do |x|
         [ command(:addmember),'-d',x,@resource[:name] ].shelljoin
-      }
-    else
-      to_be_added = to_be_added | @current_members
+      end
     end
 
-    !to_be_added.empty? && cmd += to_be_added.map { |x|
-      [ command(:addmember),'-a',x,@resource[:name] ].shelljoin
-    }
+    to_be_added = group_members - @current_members
+    unless to_be_added.empty?
+      cmd += to_be_added.map do |x|
+        [ command(:addmember),'-a',x,@resource[:name] ].shelljoin
+      end
+    end
 
     mod_group(cmd)
   end
 
   private
+
+  def final_members(is, should)
+    if @resource[:auth_membership]
+      should.uniq.sort
+    else
+      (is + should).uniq.sort
+    end
+  end
 
   # This define takes an array of commands to run and executes them in
   # order to modify the group memberships on the system.
